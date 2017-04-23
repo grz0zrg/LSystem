@@ -1,0 +1,320 @@
+read tools/basis.anubis
+read tools/maybefloat.anubis
+read tools/cmd_line.anubis
+read system_colors/hsl.anubis
+read graphism/geometrical_figures.anubis
+
+// should be in cmd_line.anubis ;)
+public define Maybe(Word8)
+  extract_Word8
+    (
+      String   arg,
+      String   prefix
+    ) =
+  if extract_String(arg,prefix) is
+  {
+    failure then failure,
+    success(s) then if decimal_scan(s) is
+    {
+      failure then failure,
+      success(n) then success(truncate_to_Word8(n))
+    }
+  }.
+
+type ImageToolBox:
+   tool_box(HostWindow       window,
+            HostImage        buffer,
+            RGBAImage        img,
+            ByteArray        image,
+            Int              window_width,
+            Int              window_height,
+            Var(Bool)        close_v).
+
+type LState:
+     lstate(Float cx, Float cy, Float angle, List(LState) stack).
+
+define One
+   draw_symbol
+     (
+       ImageToolBox tb,
+       Int n,
+       String lsystem,
+       LState state,
+       Float move_step,
+       Float angle,
+       Int opacity,
+       RGB rgb_color
+     ) =
+       if tb is tool_box(window,_,rgba_image,_,window_width,window_height,c_v) then
+       if *c_v then unique else
+         paint_image(window,
+                     rect(0,0,window_width,window_height),
+                     0,0,
+                     to_host_image(rgba_image, 1));
+       if state is lstate(cx, cy, cangle, stack) then
+       if nth(n, lsystem) is
+       {
+         failure then println("done!"); unique,
+         success(s) then
+            if (s = 'F' | s = 'G') then
+                  (with  sc = move_step * cos(cangle),
+                         ss = move_step * sin(cangle),
+                         x2 = success(cx) + sc,
+                         y2 = success(cy) + ss,
+                         color = rgb_color, // fancy coloration with HSL: to_RGB(hsl(n, 70, 70))
+                    if x2 is
+                    {
+                       failure then println("x2 overflow."),
+                       success(x) then
+                         if y2 is
+                         {
+                           failure then println("y2 overflow."),
+                           success(y) then
+                              if color is rgb(r, g, b) then
+                                  draw_line(rgba_image, rgba(r, g, b, truncate_to_Word8(opacity)), (integral_part(cx), integral_part(cy)), (integral_part(x), integral_part(y)));
+                                  draw_symbol(tb, n + 1, lsystem, lstate(x, y, cangle, stack), move_step, angle, opacity, rgb_color)
+                         }
+                    })
+           else if s = '-' then
+              with new_angle = cangle - angle,
+              if new_angle is
+              {
+                failure then println("Angle overflow."),
+                success(a) then draw_symbol(tb, n + 1, lsystem, lstate(cx, cy, a, stack), move_step, angle, opacity, rgb_color)
+              }
+           else if s = '+' then
+              with new_angle = cangle + angle,
+              if new_angle is
+              {
+                failure then println("Angle overflow."),
+                success(a) then draw_symbol(tb, n + 1, lsystem, lstate(cx, cy, a, stack), move_step, angle, opacity, rgb_color)
+              }
+           else if s = '[' then
+              draw_symbol(tb, n + 1, lsystem, lstate(cx, cy, cangle, [lstate(cx, cy, cangle, stack) . stack]), move_step, angle, opacity, rgb_color)
+           else if s = ']' then
+              if stack is
+              {
+                 [ ] then println("No states left to pop off the stack."),
+                 [restored_state . t] then
+                    draw_symbol(tb, n + 1, lsystem, restored_state, move_step, angle, opacity, rgb_color)
+              }
+           else
+             draw_symbol(tb, n + 1, lsystem, lstate(cx, cy, cangle, stack), move_step, angle, opacity, rgb_color)
+       }.
+
+define One
+   draw_lsystem
+     (
+       ImageToolBox tb,
+       String lsystem,
+       Float start_x,
+       Float start_y,
+       Float move_step,
+       Float angle,
+       Float start_angle,
+       Int opacity,
+       RGB color
+     ) =
+   if tb is tool_box(window,_,_,_,_,_,c_v) then
+   if *c_v then unique else
+   if size(window) is (window_width, window_height) then
+     draw_symbol(tb, 0, lsystem, lstate(start_x, start_y, start_angle, []), move_step, angle, opacity, color)
+   .
+
+define (HostWindow window, List(Rectangle) clip) -> One
+   paint_method
+     (
+       HostImage           buffer,
+     ) =
+   (HostWindow window, List(Rectangle) clip) |->
+      if size(window) is (window_width,window_height) then
+      paint_image(window,
+                  rect(0,0,window_width,window_height),
+                  0,0,
+                  buffer).
+
+define Maybe(ImageToolBox)
+   open_window
+     (
+       Int          window_width,
+       Int          window_height
+     ).
+
+define (HostWindow window, HostWindowEvent(One) e) -> List(Rectangle)
+   event_handler
+     (
+       HostImage                   buffer,
+       Var(Bool)                   close_v
+     ) =
+   (HostWindow window , HostWindowEvent(One) e) |->
+     if e is
+       {
+         quit                     then print("closing\n"); close_v <- true; [],
+         expose                   then if size(window) is (window_width,window_height) then
+                                         [rect(0,0,window_width,window_height)],
+         pointer_entering         then [],
+         pointer_leaving          then [],
+         key_down(ks,kk)          then [],
+         mouse_move(ks,mx,my)     then [],
+         mouse_click(ks,mc,mx,my) then
+                                       forget(open_window(800, 600));
+                                       [],
+         mouse_wheel(ks,md,mx,my) then [],
+         tick                     then [],
+         repaint(_)               then [],
+         specific(_)              then []
+      }.
+
+define Maybe(ImageToolBox)
+   open_window
+     (
+       Int          window_width,
+       Int          window_height
+     ) =
+      with buffer         = to_host_image(create_rgba_image(window_width, window_height, rgba(255,255,255,255)), 1),
+           image          = create_rgba_image(window_width, window_height, rgba(255,255,255,255)),
+           close_v        = var((Bool)false),
+      if open_host_window(rect((Int)0, (Int)0, window_width, window_height),
+                       "LSystem",
+                       managed(not_resizable),
+                       paint_method(buffer),
+                       event_handler(buffer, close_v),
+                       identity) is
+      {
+        failure then failure,
+        success(window) then
+           with tb = tool_box(window, buffer, image,
+                              constant_byte_array(window_width*window_height, 0),
+                              window_width, window_height,
+                              close_v),
+           show(window);
+           success(tb)
+      }.
+
+define String lsystem_usage = "Usage example (plant): anbexec lsystem -s:8 -a:25 -start_x:400 -start_y:600 -start_angle:270 -opacity:192 -i:6 -axiom:X -rule:X=F-[[X]+X]+F[+FX]-X -rule:F=FF".
+
+// expansion
+define String
+   lsystem_replace
+     (
+       Int          n,
+       String       axiom,
+       List(String) rules,
+       String       result
+     ) =
+       if nth(n, axiom) is
+       {
+         failure then result,
+         success(ca) then
+           with f = (List(String) l ) |-f1->
+                    if l is
+                    {
+                       [ ] then constant_string(1, ca),
+                       [rule . others] then
+                         if nth(0, rule) is
+                         {
+                            failure then should_not_happen(axiom),
+                            success(cr) then
+                              if nth(1, rule) is
+                              {
+                                 failure then should_not_happen(axiom),
+                                 success(ac) then
+                                    if ac = '=' then
+                                    (
+                                       if ca = cr then
+                                          (if sub_string(rule, 2, length(rule) - 2) is
+                                           {
+                                             failure then should_not_happen(axiom),
+                                             success(rule_content) then
+                                                rule_content
+                                           }
+                                          )
+                                       else
+                                          f1(others)
+                                    )
+                                    else
+                                       should_not_happen(axiom)
+                             }
+                         }
+                    },
+           lsystem_replace(n + 1, axiom, rules, result + f(rules))
+       }.
+
+// retrieve the complete grammar expansion
+define String
+   lsystem_compute
+     (
+       Int          n,
+       String       axiom,
+       List(String) rules
+     ) =
+     if n =< 0 then axiom
+     else
+       lsystem_compute(n - 1, lsystem_replace(0, axiom, rules, ""), rules).
+
+define Float m_pi = 3.141592653589.
+
+global define One
+    lsystem
+     (
+       List(String) args
+     ) =
+       with move_step        = get_parameter(args,
+                                      (String s) |-> extract_Float(s,"-s:"),
+                                      10.0),
+            angle            = get_parameter(args,
+                                      (String s) |-> extract_Float(s,"-a:"),
+                                      70),
+            start_angle      = get_parameter(args,
+                                      (String s) |-> extract_Float(s,"-start_angle:"),
+                                      0),
+            start_x          = get_parameter(args,
+                                      (String s) |-> extract_Int(s,"-start_x:"),
+                                      0),
+            start_y          = get_parameter(args,
+                                      (String s) |-> extract_Int(s,"-start_y:"),
+                                      0),
+            opacity          = get_parameter(args,
+                                      (String s) |-> extract_Int(s,"-opacity:"),
+                                      255),
+            iteration        = get_parameter(args,
+                                      (String s) |-> extract_Int(s,"-i:"),
+                                      3),
+//            background_color = get_parameter(args,
+//                                      (String s) |-> extract_Int(s,"-b:"),
+//                                      255),
+            axiom            = get_parameter(args,
+                                      (String s) |-> extract_String(s,"-axiom:"),
+                                      "F"),
+            rules            = get_parameters(args,
+                                      (String s) |-> extract_String(s,"-rule:")),
+            // RGB color of symbols
+            r                = get_parameter(args,
+                                      (String s) |-> extract_Word8(s,"-r:"),
+                                      0),
+            g                = get_parameter(args,
+                                      (String s) |-> extract_Word8(s,"-g:"),
+                                      255),
+            b                = get_parameter(args,
+                                      (String s) |-> extract_Word8(s,"-b:"),
+                                      0),
+       if open_window(800, 600) is
+       {
+           failure then print("Cannot open a window.\n"),
+           success(img_tb) then
+                with angle_rad       = (angle / (Float)180) * success(m_pi),
+                     start_angle_rad = (start_angle / (Float)180) * success(m_pi),
+
+                if angle_rad is
+                {
+                   failure then should_not_happen(unique),
+                   success(ar) then
+                     if start_angle_rad is
+                     {
+                         failure then should_not_happen(unique),
+                         success(sar) then
+                            delegate draw_lsystem(img_tb, lsystem_compute(iteration, axiom, rules), to_Float(start_x), to_Float(start_y), move_step, ar, sar, opacity, rgb(r, g, b)),
+                            unique
+                     }
+                }
+       }.
